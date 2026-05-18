@@ -88,7 +88,12 @@ export function InterviewSimulatorView({
     toggleCamera,
   } = useInterviewCamera();
 
-  const [useCamera, setUseCamera] = useState(false);
+  const [useCamera, setUseCamera] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("syntrix_use_camera") === "true";
+    }
+    return false;
+  });
   const [timer, setTimer] = useState(0);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -211,12 +216,18 @@ export function InterviewSimulatorView({
 
   const handleStartWithCamera = async () => {
     setUseCamera(true);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("syntrix_use_camera", "true");
+    }
     // Trigger interview starter via props
     onStart(interviewType, targetRole);
   };
 
   const handleStartWithoutCamera = () => {
     setUseCamera(false);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("syntrix_use_camera", "false");
+    }
     onStart(interviewType, targetRole);
   };
 
@@ -233,57 +244,11 @@ export function InterviewSimulatorView({
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
-  const [recognition, setRecognition] = useState<any>(null);
+  const recognitionRef = useRef<any>(null);
 
   const currentQuestion = questions[currentIndex];
   const currentAnswer = answers[currentQuestion?.id] || "";
   const currentEvaluation = evaluations[currentQuestion?.id] || null;
-
-  // 1. Initialize Web Speech Recognition (STT) on mount
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const rec = new SpeechRecognition();
-        rec.continuous = true;
-        rec.interimResults = true;
-        rec.lang = "en-US";
-
-        rec.onresult = (event: any) => {
-          let finalTranscript = "";
-          let interimTranscript = "";
-
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript + " ";
-            } else {
-              interimTranscript += event.results[i][0].transcript;
-            }
-          }
-
-          const captured = finalTranscript || interimTranscript;
-          if (captured) {
-            setAnswerInput(prev => {
-              const base = prev.trim();
-              return base ? `${base} ${captured}` : captured;
-            });
-            setInputError(null);
-          }
-        };
-
-        rec.onerror = (event: any) => {
-          console.error("Speech recognition error:", event.error);
-          setIsListening(false);
-        };
-
-        rec.onend = () => {
-          setIsListening(false);
-        };
-
-        setRecognition(rec);
-      }
-    }
-  }, []);
 
   // 2. Web Speech Synthesis (TTS) - Speak Question aloud
   const speakQuestion = (text: string) => {
@@ -336,8 +301,8 @@ export function InterviewSimulatorView({
   // 4. Inline Empty Answer Validation (Audit 5.3 requirement)
   const handleSubmit = () => {
     // Stop microphone if active
-    if (isListening && recognition) {
-      recognition.stop();
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
     }
 
     if (!answerInput.trim()) {
@@ -440,6 +405,7 @@ export function InterviewSimulatorView({
   // Clean local storage states and reset wizard (Fix 3 requirement)
   const handleResetSession = () => {
     localStorage.removeItem("syntrix_interview_session_id");
+    localStorage.removeItem("syntrix_use_camera");
     if (setIncompleteSessionId) setIncompleteSessionId(null);
     setCurrentIndex(0);
     setSubStep("configure");
@@ -1148,21 +1114,68 @@ export function InterviewSimulatorView({
           <button
             type="button"
             onClick={() => {
-              if (!recognition) {
+              if (typeof window === "undefined") return;
+              const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+              if (!SpeechRecognition) {
                 toast.error("Speech Recognition is not fully supported or active in your browser.");
                 return;
               }
+
               if (isListening) {
-                recognition.stop();
+                if (recognitionRef.current) {
+                  recognitionRef.current.stop();
+                }
+                setIsListening(false);
               } else {
                 setIsListening(true);
                 // Cancel speaking to avoid recording AI speech
-                if (typeof window !== "undefined" && window.speechSynthesis) {
+                if (window.speechSynthesis) {
                   window.speechSynthesis.cancel();
                 }
                 setIsSpeaking(false);
-                recognition.start();
-                toast.info("Microphone Active — start speaking your response.");
+
+                // Create a clean new instance on demand
+                const rec = new SpeechRecognition();
+                rec.continuous = true;
+                rec.interimResults = false;
+                rec.lang = "en-US";
+
+                rec.onresult = (event: any) => {
+                  let finalTranscript = "";
+                  for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                      finalTranscript += event.results[i][0].transcript + " ";
+                    }
+                  }
+                  if (finalTranscript) {
+                    setAnswerInput(prev => {
+                      const base = prev.trim();
+                      return base ? `${base} ${finalTranscript.trim()}` : finalTranscript.trim();
+                    });
+                    setInputError(null);
+                  }
+                };
+
+                rec.onerror = (event: any) => {
+                  console.error("Speech recognition error:", event.error);
+                  setIsListening(false);
+                  if (event.error === "not-allowed") {
+                    toast.error("Microphone permission denied. Please allow microphone access.");
+                  }
+                };
+
+                rec.onend = () => {
+                  setIsListening(false);
+                };
+
+                recognitionRef.current = rec;
+                try {
+                  rec.start();
+                  toast.info("Microphone Active — start speaking your response.");
+                } catch (err) {
+                  console.error("Speech start error:", err);
+                  setIsListening(false);
+                }
               }
             }}
             className={`px-4.5 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 flex items-center gap-2 cursor-pointer border ${
