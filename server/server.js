@@ -110,8 +110,21 @@ app.post("/api/auth/demo-session", async (req, res, next) => {
       return res.status(400).json({ error: "Missing email address." });
     }
 
-    const token = `demo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const userId = email.replace(/[^a-zA-Z0-9]/g, "-");
+    
+    // Generate a valid JWT token signed with NEXTAUTH_SECRET (Step 5)
+    const jwt = require("jsonwebtoken");
+    const token = jwt.sign(
+      { 
+        id: userId, 
+        email: email.trim().toLowerCase(), 
+        name: email.split("@")[0] 
+      },
+      NEXTAUTH_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days matching JWT
 
     const { readDB, writeDB } = require("./utils/dbStore");
     const db = readDB();
@@ -124,18 +137,19 @@ app.post("/api/auth/demo-session", async (req, res, next) => {
 
     db.demoSessions.push({
       token,
-      email,
-      userId: email.replace(/[^a-zA-Z0-9]/g, "-"),
+      email: email.trim().toLowerCase(),
+      userId,
       expiresAt
     });
 
     await writeDB(db);
 
-    console.log(`[Auth] Demo session created for ${email}. Token: ${token}`);
+    console.log(`[Auth] Demo session created for ${email}. Token (JWT): ${token.substring(0, 20)}...`);
 
     res.status(200).json({
       success: true,
       token,
+      apiToken: token, // Return as both token and apiToken for backward compatibility
       email,
       expiresAt
     });

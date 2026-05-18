@@ -46,6 +46,19 @@ export const authOptions: NextAuthOptions = {
           { expiresIn: "7d" }
         );
       }
+      
+      // Upgrade safety check: guarantee apiToken presence across all subsequent hooks
+      if (!token.apiToken && (token.id || token.sub)) {
+        token.apiToken = jwt.sign(
+          { 
+            id: token.id || token.sub, 
+            email: token.email, 
+            name: token.name || (token.email ? (token.email as string).split("@")[0] : "user")
+          },
+          NEXTAUTH_SECRET,
+          { expiresIn: "7d" }
+        );
+      }
       return token;
     },
     async session({ session, token }: any) {

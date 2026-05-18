@@ -12,20 +12,16 @@ const API = axios.create({
 API.interceptors.request.use(
   async (config) => {
     try {
-      const session = await getSession();
-      if (session) {
-        // Derive token server-side only by querying our secure Next.js API route (BFF pattern)
-        // Utilizes direct fetch instead of the API instance to avoid recursive loop crashes
-        const response = await fetch("/api/auth/token");
-        if (response.ok) {
-          const data = await response.json();
-          if (data?.apiToken) {
-            config.headers.Authorization = `Bearer ${data.apiToken}`;
-          }
+      const response = await fetch("/api/auth/token");
+      if (response.ok) {
+        const data = await response.json();
+        const token = data?.token || data?.apiToken;
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
         }
       }
     } catch (err) {
-      console.warn("Could not inject session header:", err);
+      console.error("[API] Failed to get auth token:", err);
     }
     return config;
   },
