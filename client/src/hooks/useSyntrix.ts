@@ -126,6 +126,9 @@ export function useSyntrix() {
     const formData = new FormData();
     formData.append("resume", selectedFile);
 
+    const url = `${API.defaults.baseURL}/resume/upload`;
+    console.log("[Upload] Calling:", url);
+
     try {
       const res = await API.post("/resume/upload", formData);
       
@@ -159,6 +162,9 @@ export function useSyntrix() {
 
     const formData = new FormData();
     formData.append("resume", selectedFile);
+
+    const uploadUrl = `${API.defaults.baseURL}/resume/upload`;
+    console.log("[Upload] Calling:", uploadUrl);
 
     try {
       // 1. Upload & parse text
@@ -232,7 +238,10 @@ export function useSyntrix() {
         console.warn("Could not retrieve bearer token server-side:", tokenErr);
       }
 
-      const response = await fetch("http://localhost:5000/api/resume/chat", {
+      const chatUrl = `${API.defaults.baseURL || "http://localhost:5000/api"}/resume/chat`;
+      console.log("[Chat RAG] Calling SSE Stream at:", chatUrl);
+
+      const response = await fetch(chatUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -2,6 +2,8 @@ import axios from "axios";
 import { getSession, signOut } from "next-auth/react";
 import { toast } from "sonner";
 
+console.log("[API] Base URL:", process.env.NEXT_PUBLIC_API_URL);
+
 const API = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
 });

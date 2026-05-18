@@ -60,7 +60,13 @@ export default function AuthPage() {
     if (!hasGoogle) {
       try {
         console.log(`[Auth] Sandbox mode: Pre-caching demo-session for ${email.trim()}`);
-        const demoRes = await fetch("http://localhost:5000/api/auth/demo-session", {
+        const getApiRootUrl = () => {
+          const envUrl = process.env.NEXT_PUBLIC_API_URL;
+          if (!envUrl) return "http://localhost:5000";
+          return envUrl.endsWith("/api") ? envUrl.slice(0, -4) : envUrl;
+        };
+        const apiRoot = getApiRootUrl();
+        const demoRes = await fetch(`${apiRoot}/api/auth/demo-session`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
