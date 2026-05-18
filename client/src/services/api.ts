@@ -3,7 +3,7 @@ import { getSession, signOut } from "next-auth/react";
 import { toast } from "sonner";
 
 const API = axios.create({
-  baseURL: "http://localhost:5000/api",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
 });
 
 // 1. Request Interceptor: Automatically inject signed NextAuth token into headers
