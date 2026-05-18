@@ -78,8 +78,10 @@ const submitSessionAnswer = asyncHandler(async (req, res, next) => {
 
   let evaluation = null;
   try {
-    // Grade the candidate response using standard gpt-4o (Audit 6)
-    evaluation = await evaluateAnswer(question, answerText);
+    console.log("[Interview] Evaluating answer:", answerText?.substring(0, 50));
+    const result = await evaluateAnswer(question, answerText, session.role);
+    console.log("[Interview] Score returned:", result.score);
+    evaluation = result;
   } catch (error) {
     throw new AppError("Failed to grade response.", 502, "AI_SERVICE_ERROR", error.message);
   }

@@ -4,6 +4,8 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+const openai = client;
+
 /**
  * High-fidelity fallback question generator based on resume and target job role
  * Strictly matches the required 5-question schema structure (Fix 1.2)
@@ -97,68 +99,51 @@ const generateFallbackQuestions = (resumeText, jdText, type = "Technical", role 
  * Matches the required scoring schema structure (Fix 1.3)
  */
 const generateFallbackEvaluation = (question, answer) => {
-  const ans = (answer || "").toLowerCase();
-  const words = ans.split(/\s+/).filter(w => w.trim().length > 0);
-  
-  // Scan for STAR methodology markers
-  const starIndicators = ["situation", "task", "action", "result", "spearheaded", "solved", "achieved", "reduced", "increased"];
-  let starHits = 0;
-  starIndicators.forEach(word => {
-    if (ans.includes(word)) starHits++;
-  });
-
-  // Scan for quantitative metrics
-  const metricMatch = ans.match(/\b\d+%\b|\b\d+\s*(ms|seconds|hours|users|dollars|usd)\b|\b(reduced|increased|optimized)\s+by\s+\d+\b/i);
-  const hasMetrics = !!metricMatch;
+  const ans = (answer || "").trim();
+  const words = ans.split(/\s+/).filter(w => w.length > 0);
+  const wordCount = words.length;
 
   let score = 65;
-  if (words.length > 50) score += 10;
-  if (words.length > 100) score += 5;
-  if (starHits >= 2) score += 10;
-  if (hasMetrics) score += 8;
-
-  score = Math.min(score, 95);
+  let verdict = "Average";
+  
+  if (wordCount < 20) {
+    score = 25;
+    verdict = "Poor";
+  } else if (wordCount >= 20 && wordCount < 50) {
+    score = 50;
+    verdict = "Needs Work";
+  } else if (wordCount >= 50 && wordCount <= 100) {
+    score = 65;
+    verdict = "Average";
+  } else {
+    score = 75;
+    verdict = "Strong";
+  }
 
   const strengths = [];
   const improvements = [];
   
-  if (words.length > 60) {
-    strengths.push("Provided a detailed explanation that maps out clear contextual depth.");
+  if (wordCount >= 50) {
+    strengths.push("Provided a structured explanation with solid contextual length.");
   } else {
-    improvements.push("Expand your answer to explain the initial challenge in more depth to hook the recruiter.");
+    improvements.push("Expand your answer to explain the initial challenge in more depth.");
   }
 
-  if (starHits >= 2) {
-    strengths.push("Used key project-management verbs showing a clear action-oriented drive.");
-  } else {
-    improvements.push("Structure your narrative strictly using the STAR methodology (Situation, Task, Action, Result).");
-  }
+  improvements.push("Structure your narrative strictly using the STAR methodology (Situation, Task, Action, Result).");
+  improvements.push("Integrate clear metric markers representing technical gains.");
 
-  if (hasMetrics) {
-    strengths.push("Successfully backed up engineering accomplishments with clear, quantitative deliverables.");
-  } else {
-    improvements.push("Integrate clear metric markers representing technical gains (e.g. 'boosted speeds by 30%').");
-  }
-
-  // Ensure baseline values exist
-  if (strengths.length === 0) strengths.push("Stated core technical principles accurately.");
-  if (improvements.length === 0) improvements.push("Discuss how you collaborate with cross-functional members to deliver solutions.");
-
-  const verdict = score >= 80 ? "Strong" : score >= 60 ? "Average" : "Needs Work";
-
-  const starRephrase = `Here is an optimized STAR structure for your response:
-• Situation: In my previous project, we faced a major system performance bottleneck.
-• Task: I was assigned to optimize the latency metrics across database schemas and caching layers.
-• Action: I spearheaded indexing modifications, refactored raw joins, and integrated a Redis cache layer.
-• Result: Accomplished 100% data integrity, decreasing overall query processing latencies by 35% and saving 12 developer hours weekly!`;
+  const starRephrase = `• Situation: In my previous project, we faced a system performance bottleneck.
+• Task: I was assigned to optimize latency across database schemas and caching layers.
+• Action: I spearheaded indexing modifications, refactored raw joins, and integrated a Redis caching layer.
+• Result: Accomplished 100% data integrity, decreasing overall query processing latencies by 35%.`;
 
   return {
     score,
-    confidence: Math.round(score * 0.9),
-    strengths,
+    confidence: 85,
+    verdict,
+    strengths: strengths.length > 0 ? strengths : ["Answer addressed key technical terms."],
     improvements,
-    starRephrase,
-    verdict
+    starRephrase
   };
 };
 
@@ -214,49 +199,49 @@ Generate exactly 5 interview questions tailored to this candidate and role. Retu
 
 /**
  * Evaluate the candidate's answer using STAR methodology via OpenAI gpt-4o
- * Matches Fix 1.3 specifications
  */
-const evaluateAnswer = async (question, answerText) => {
+const evaluateAnswer = async (question, answerText, jobRole = "Software Engineer") => {
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4o",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `Evaluate this interview answer using STAR methodology.
-Question: ${question}
-Candidate Answer: ${answerText}
+    const prompt = `
+  You are an expert technical interviewer evaluating
+  a candidate's interview answer.
 
-Return ONLY valid JSON:
-{
-  "score": 0-100,
-  "confidence": 0-100,
-  "strengths": ["...", "..."],
-  "improvements": ["...", "..."],
-  "starRephrase": "Your optimized, ideal STAR format rephrased response...",
-  "verdict": "Strong|Average|Needs Work"
-}`,
-        },
-        {
-          role: "user",
-          content: `Please grade my answer. Question: "${question}". Answer: "${answerText}".`,
-        },
-      ],
-      temperature: 0.5,
+  Question: ${question}
+  Candidate Answer: ${answerText}
+  Job Role: ${jobRole || "Software Engineer"}
+
+  Evaluate strictly and honestly. Do not default to
+  average scores. Give high scores only for excellent
+  answers and low scores for poor ones.
+
+  Return ONLY this exact JSON with no extra text:
+  {
+    "score": <0-100 integer based on answer quality>,
+    "confidence": <0-100 integer>,
+    "verdict": "<Excellent|Strong|Average|Needs Work|Poor>",
+    "strengths": ["<specific strength from their answer>"],
+    "improvements": ["<specific improvement needed>",
+                     "<second improvement>"],
+    "starRephrase": "<full ideal STAR format answer>"
+  }
+
+  Scoring guide:
+  - 90-100: Exceptional, specific, metrics included
+  - 75-89: Strong, clear structure, good examples
+  - 60-74: Average, vague but relevant
+  - 40-59: Weak, off-topic or incomplete
+  - 0-39: Poor, irrelevant or empty answer
+  `;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      temperature: 0.7
     });
 
     const parsed = JSON.parse(response.choices[0].message.content);
-    
-    // Ensure all required fields exist
-    return {
-      score: typeof parsed.score === "number" ? parsed.score : 70,
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 75,
-      strengths: Array.isArray(parsed.strengths) ? parsed.strengths : ["Answer addressed the key problem statement."],
-      improvements: Array.isArray(parsed.improvements) ? parsed.improvements : ["Structure the narrative better using measurable results."],
-      starRephrase: parsed.starRephrase || "Optimized STAR phrasing: Under pressure, I executed target solutions to resolve the blocker.",
-      verdict: parsed.verdict || "Average"
-    };
+    return parsed;
   } catch (error) {
     console.error("[OpenAI Evaluation] Evaluation failed, utilizing high-fidelity fallback:", error.message);
     return generateFallbackEvaluation(question, answerText);
