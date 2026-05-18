@@ -47,17 +47,21 @@ const allowedOrigins = [
   "http://localhost:3000",
   "https://syntrix-ai.vercel.app",
   "https://syntrix-ai-nu.vercel.app",
-  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL
 ].filter(Boolean);
 
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS policy violation"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -110,48 +114,45 @@ app.post("/api/auth/demo-session", async (req, res, next) => {
       return res.status(400).json({ error: "Missing email address." });
     }
 
-    const userId = email.replace(/[^a-zA-Z0-9]/g, "-");
-    
-    // Generate a valid JWT token signed with NEXTAUTH_SECRET (Step 5)
+    const userId = `demo_${Date.now()}`;
     const jwt = require("jsonwebtoken");
+    const secret = process.env.NEXTAUTH_SECRET || "syntrix-ai-super-secret-key-2026";
+    
     const token = jwt.sign(
-      { 
-        id: userId, 
-        email: email.trim().toLowerCase(), 
-        name: email.split("@")[0] 
-      },
-      NEXTAUTH_SECRET,
-      { expiresIn: "7d" }
+      { sub: userId, email: email.trim().toLowerCase(), name: "Demo User" },
+      secret,
+      { expiresIn: "24h" }
     );
-
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days matching JWT
 
     const { readDB, writeDB } = require("./utils/dbStore");
     const db = readDB();
     if (!db.demoSessions) {
-      db.demoSessions = [];
+      db.demoSessions = {};
     }
 
-    // Cleanup expired demo sessions to avoid bloating local store
-    db.demoSessions = db.demoSessions.filter(d => new Date(d.expiresAt) > new Date());
+    // Clean up expired demo sessions periodically
+    const now = Date.now();
+    for (const key in db.demoSessions) {
+      if (db.demoSessions[key].expiresAt < now) {
+        delete db.demoSessions[key];
+      }
+    }
 
-    db.demoSessions.push({
-      token,
-      email: email.trim().toLowerCase(),
-      userId,
-      expiresAt
-    });
+    db.demoSessions[token] = {
+      user: { id: userId, email: email.trim().toLowerCase(), name: "Demo User" },
+      expiresAt: now + 24 * 60 * 60 * 1000
+    };
 
     await writeDB(db);
 
-    console.log(`[Auth] Demo session created for ${email}. Token (JWT): ${token.substring(0, 20)}...`);
+    console.log(`[Auth] Demo session created for ${email}. Token: ${token.substring(0, 20)}...`);
 
     res.status(200).json({
       success: true,
       token,
-      apiToken: token, // Return as both token and apiToken for backward compatibility
+      apiToken: token,
       email,
-      expiresAt
+      expiresAt: new Date(now + 24 * 60 * 60 * 1000).toISOString()
     });
   } catch (error) {
     next(error);
@@ -168,4 +169,8 @@ const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`🚀 Production-grade Server running on port ${PORT} [Mode: ${process.env.NODE_ENV}]`);
+  console.log("[ENV] NODE_ENV:", process.env.NODE_ENV);
+  console.log("[ENV] FRONTEND_URL:", process.env.FRONTEND_URL);
+  console.log("[ENV] NEXTAUTH_SECRET set:", !!process.env.NEXTAUTH_SECRET);
+  console.log("[ENV] OPENAI_API_KEY set:", !!process.env.OPENAI_API_KEY);
 });

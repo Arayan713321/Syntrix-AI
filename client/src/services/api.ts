@@ -5,7 +5,7 @@ import { toast } from "sonner";
 console.log("[API] Base URL:", process.env.NEXT_PUBLIC_API_URL);
 
 const API = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
+  baseURL: `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api`,
 });
 
 // 1. Request Interceptor: Automatically inject signed NextAuth token into headers
@@ -13,15 +13,12 @@ API.interceptors.request.use(
   async (config) => {
     try {
       const response = await fetch("/api/auth/token");
-      if (response.ok) {
-        const data = await response.json();
-        const token = data?.token || data?.apiToken;
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
+      const data = await response.json();
+      if (data.token) {
+        config.headers.Authorization = `Bearer ${data.token}`;
       }
-    } catch (err) {
-      console.error("[API] Failed to get auth token:", err);
+    } catch (error) {
+      console.error("[API] Token fetch failed:", error);
     }
     return config;
   },

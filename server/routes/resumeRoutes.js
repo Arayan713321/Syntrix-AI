@@ -36,13 +36,19 @@ const storage = multer.diskStorage({
     }
 
     // Resolve directories safely to prevent path traversal attempts (Audit 1 requirement)
-    const userDir = path.resolve(__dirname, "../uploads", userId);
-    const UPLOAD_BASE_DIR = path.resolve(__dirname, "../uploads");
+    const baseDir = process.env.NODE_ENV === "production" 
+      ? "/tmp/uploads" 
+      : path.resolve(__dirname, "../uploads");
+      
+    const userDir = path.resolve(baseDir, userId);
 
-    if (!userDir.startsWith(UPLOAD_BASE_DIR)) {
+    if (!userDir.startsWith(baseDir)) {
       return cb(new Error("Security Error: Path traversal attempt detected."), null);
     }
 
+    if (!fs.existsSync(baseDir)) {
+      fs.mkdirSync(baseDir, { recursive: true });
+    }
     if (!fs.existsSync(userDir)) {
       fs.mkdirSync(userDir, { recursive: true });
     }

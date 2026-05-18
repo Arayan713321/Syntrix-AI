@@ -1,77 +1,61 @@
 const jwt = require("jsonwebtoken");
-const { AppError } = require("./errorMiddleware");
 const { readDB } = require("../utils/dbStore");
 
-const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "syntrix-ai-super-secret-key-2026";
-
-/**
- * Express middleware to enforce secure JWT verification for protected API endpoints
- */
-const protect = (req, res, next) => {
-  let token = null;
-
-  // Extract Bearer token from headers
-  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
-    token = req.headers.authorization.split(" ")[1];
-  }
-
-  console.log("[Auth] Token received:", !!token);
-
-  if (!token) {
-    return next(new AppError("Not authorized to access this resource. Please authenticate.", 401, "UNAUTHORIZED"));
-  }
-
-  let decoded = null;
-
-  // 1. Try NextAuth JWT verification
+const protect = async (req, res, next) => {
   try {
-    decoded = jwt.verify(token, NEXTAUTH_SECRET);
-    console.log("[Auth] Verification result:", !!decoded);
-    
-    // Bind parsed user context to request object (Fix 2 requirement)
-    req.user = {
-      id: decoded.id,
-      email: decoded.email,
-      name: decoded.name,
-    };
-    
-    return next();
-  } catch (error) {
-    console.log("[Auth] JWT verification failed, attempting fallback:", error.message);
-    
-    // 2. Fallback: Treat token as user sub or look it up in db.demoSessions
-    try {
-      const db = readDB();
-      
-      // Look up by token or look up by email match
-      const demo = db.demoSessions?.find(d => d.token === token);
-      if (demo && new Date(demo.expiresAt) > new Date()) {
-        console.log("[Auth] Verification result (Demo fallback): true");
-        req.user = {
-          id: demo.userId,
-          email: demo.email,
-          name: demo.email.split("@")[0],
-        };
-        return next();
-      }
-      
-      // Or if token matches a userId from our demo sessions (fallback for when sub/userId is sent directly)
-      const demoUserBySub = db.demoSessions?.find(d => d.userId === token);
-      if (demoUserBySub && new Date(demoUserBySub.expiresAt) > new Date()) {
-        console.log("[Auth] Verification result (Demo user by sub): true");
-        req.user = {
-          id: demoUserBySub.userId,
-          email: demoUserBySub.email,
-          name: demoUserBySub.email.split("@")[0],
-        };
-        return next();
-      }
-    } catch (dbErr) {
-      console.error("[AuthMiddleware] Demo session check error:", dbErr);
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        error: { message: "Not authorized", code: "UNAUTHORIZED" }
+      });
     }
-    
-    console.log("[Auth] Verification result: false");
-    return next(new AppError("Session token is invalid or has expired. Please sign in.", 401, "UNAUTHORIZED", error.message));
+    const token = authHeader.split(" ")[1];
+
+    console.log("[Auth] Token received:", !!token);
+
+    // Try NextAuth JWT first
+    try {
+      const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || "syntrix-ai-super-secret-key-2026");
+      console.log("[Auth] Verification result:", !!decoded);
+      req.user = {
+        id: decoded.sub || decoded.id,
+        email: decoded.email,
+        name: decoded.name
+      };
+      return next();
+    } catch (jwtError) {
+      console.log("[Auth] JWT verification failed, attempting fallback:", jwtError.message);
+      
+      // Try demo session token
+      const db = await readDB();
+      const demoSession = db.demoSessions?.[token];
+      if (demoSession && demoSession.expiresAt > Date.now()) {
+        console.log("[Auth] Verification result (Demo fallback): true");
+        req.user = demoSession.user;
+        return next();
+      }
+
+      // Try demo session by user ID fallback
+      const demoUserBySub = Object.values(db.demoSessions || {}).find(d => d.user?.id === token);
+      if (demoUserBySub && demoUserBySub.expiresAt > Date.now()) {
+        console.log("[Auth] Verification result (Demo user by sub): true");
+        req.user = demoUserBySub.user;
+        return next();
+      }
+
+      console.log("[Auth] Verification result: false");
+      return res.status(401).json({
+        success: false,
+        error: { message: "Invalid or expired token", code: "UNAUTHORIZED" }
+      });
+    }
+  } catch (error) {
+    console.error("[Auth] Overall auth error:", error);
+    return res.status(401).json({
+      success: false,
+      error: { message: "Auth error", code: "UNAUTHORIZED" }
+    });
   }
 };
 
